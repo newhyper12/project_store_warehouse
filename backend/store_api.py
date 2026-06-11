@@ -1,7 +1,7 @@
 # backend/store_api.py
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from .database import store_db
 from backend.models import get_current_user
 router = APIRouter(prefix="/store", tags=["Store"])
@@ -12,6 +12,8 @@ class ProductOut(BaseModel):
     id: int
     name: str
     description: str
+    price: float = 0.0
+    category_id: Optional[int] = None
 
 
 class DeliveryItemCreate(BaseModel):

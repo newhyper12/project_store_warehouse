@@ -19,3 +19,11 @@ store_db = Database(STORE_DB_URL)
 # Подключение для склада
 WAREHOUSE_DB_URL = f"postgresql://{os.getenv('WAREHOUSE_DB_USER')}:{os.getenv('WAREHOUSE_DB_PASS')}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 warehouse_db = Database(WAREHOUSE_DB_URL)
+
+# Подключение для покупателей (опционально, можно использовать store_db)
+CUSTOMER_DB_URL = f"postgresql://{os.getenv('CUSTOMER_DB_USER', 'customer_user')}:{os.getenv('CUSTOMER_DB_PASS', 'customer123')}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+customer_db = Database(CUSTOMER_DB_URL)
+
+# Подключение для поставщиков (опционально, можно использовать warehouse_db)
+SUPPLIER_DB_URL = f"postgresql://{os.getenv('SUPPLIER_DB_USER', 'supplier_user')}:{os.getenv('SUPPLIER_DB_PASS', 'supplier123')}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+supplier_db = Database(SUPPLIER_DB_URL)

@@ -6,9 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { authApi } from "@/api/client";
 import Index from "./pages/Index";
-import Login from "./pages/Login"; // ← новая страница
+import Login from "./pages/Login";
 import StorePage from "./pages/StorePage";
 import WarehousePage from "./pages/WarehousePage";
+import SupplierPage from "./pages/SupplierPage"; // ← ДОБАВЛЕНО
 import NotFound from "./pages/NotFound";
 
 // ======================
@@ -16,7 +17,7 @@ import NotFound from "./pages/NotFound";
 // ======================
 interface ProtectedRouteProps {
   children: JSX.Element;
-  requiredRole?: 'store' | 'warehouse';
+  requiredRole?: 'store' | 'warehouse' | 'customer' | 'supplier' | 'admin'; // ← ОБНОВЛЕНО
 }
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
@@ -27,9 +28,34 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     return <Navigate to="/login" replace />;
   }
 
-  // TODO: Проверка роли (если нужно)
-  // Сейчас мы полагаемся на backend — он сам фильтрует данные по токену
-  // Поэтому клиентская проверка роли не обязательна для учебного проекта
+  // Проверка роли (если требуется)
+  if (requiredRole) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        // Если роль не совпадает и это не админ
+        if (payload.role !== requiredRole && payload.role !== 'admin') {
+          return (
+            <div className="min-h-screen flex items-center justify-center">
+              <div className="text-center p-8">
+                <h2 className="text-2xl font-bold text-red-500 mb-4">Доступ запрещен</h2>
+                <p className="text-muted-foreground">
+                  Требуется роль: <span className="font-mono font-bold">{requiredRole}</span>
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Ваша текущая роль: <span className="font-mono">{payload.role}</span>
+                </p>
+              </div>
+            </div>
+          );
+        }
+      } catch (error) {
+        console.error('Ошибка декодирования токена:', error);
+        return <Navigate to="/login" replace />;
+      }
+    }
+  }
 
   return children;
 };
@@ -114,21 +140,30 @@ const App = () => (
           <Route path="/login" element={<Login />} />
           
           {/* Защищённые маршруты */}
-          <Route 
-            path="/store" 
+          <Route
+            path="/store"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredRole="store">
                 <StorePage />
               </ProtectedRoute>
-            } 
+            }
           />
-          <Route 
-            path="/warehouse" 
+          <Route
+            path="/warehouse"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredRole="warehouse">
                 <WarehousePage />
               </ProtectedRoute>
-            } 
+            }
+          />
+          {/* ← ДОБАВЛЕН НОВЫЙ МАРШРУТ ДЛЯ ПОСТАВЩИКА */}
+          <Route
+            path="/supplier"
+            element={
+              <ProtectedRoute requiredRole="supplier">
+                <SupplierPage />
+              </ProtectedRoute>
+            }
           />
           
           {/* 404 */}

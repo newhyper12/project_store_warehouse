@@ -10,26 +10,33 @@ import Login from "./pages/Login"; // ← новая страница
 import StorePage from "./pages/StorePage";
 import WarehousePage from "./pages/WarehousePage";
 import NotFound from "./pages/NotFound";
+import CustomerShopPage from "./pages/CustomerShopPage";
 
 // ======================
 // Компонент защищённого маршрута
 // ======================
 interface ProtectedRouteProps {
   children: JSX.Element;
-  requiredRole?: 'store' | 'warehouse';
+  requiredRole?: 'store' | 'warehouse' | 'customer' | 'supplier' | 'admin';
 }
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const isAuthenticated = authApi.isAuthenticated();
   
-  // Если не авторизован — перенаправляем на логин
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
-  // TODO: Проверка роли (если нужно)
-  // Сейчас мы полагаемся на backend — он сам фильтрует данные по токену
-  // Поэтому клиентская проверка роли не обязательна для учебного проекта
+  // Проверка роли
+  if (requiredRole) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.role !== requiredRole && payload.role !== 'admin') {
+        return <div className="p-10 text-center text-red-500">Доступ запрещен. Требуется роль: {requiredRole}</div>;
+      }
+    }
+  }
 
   return children;
 };
@@ -108,12 +115,26 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/store" element={<StorePage />} />
-            <Route path="/warehouse" element={<WarehousePage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+                   <Routes>
+                     <Route path="/" element={<Index />} />
+                     <Route path="/login" element={<Login />} />
+                     <Route path="/store" element={
+                       <ProtectedRoute requiredRole="store">
+                         <StorePage />
+                       </ProtectedRoute>
+                     } />
+                     <Route path="/warehouse" element={
+                       <ProtectedRoute requiredRole="warehouse">
+                         <WarehousePage />
+                       </ProtectedRoute>
+                     } />
+                     <Route path="/shop" element={
+                       <ProtectedRoute requiredRole="customer">
+                         <CustomerShopPage />
+                       </ProtectedRoute>
+                     } />
+                     <Route path="*" element={<NotFound />} />
+                   </Routes>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

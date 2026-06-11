@@ -8,7 +8,7 @@ import type {
 } from '@/types';
 
 // API Base URL - Backend and Database server
-export const API_BASE = 'http://26.242.135.113:8000';
+export const API_BASE = 'http://localhost:8000';
 
 
 // Создаём два клиента:

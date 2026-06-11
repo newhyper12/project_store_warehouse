@@ -1,5 +1,3 @@
-
-# main.py (уже НЕ в папке backend!)
 from fastapi import FastAPI
 
 from backend.store_api import router as store_router
@@ -7,11 +5,12 @@ from backend.warehouse_api import router as warehouse_router
 from backend.database import store_db, warehouse_db
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from backend.customer_api import router as customer_router
+from backend.supplier_api import router as supplier_router
+from backend.database import customer_db, supplier_db
 
 app = FastAPI()
 
-# 👇 ДОБАВЬТЕ ЭТОТ КАСТОМНЫЙ MIDDLEWARE
-# 🔥 Обязательно: до @app.post, @app.get и т.д.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -43,11 +42,15 @@ async def log_requests(request, call_next):
 async def startup():
     await store_db.connect()
     await warehouse_db.connect()
+    await customer_db.connect()
+    await supplier_db.connect()
 
 @app.on_event("shutdown")
 async def shutdown():
     await store_db.disconnect()
     await warehouse_db.disconnect()
+    await customer_db.disconnect()
+    await supplier_db.disconnect()
 
 # main.py
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -93,3 +96,5 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 app.include_router(store_router)
 app.include_router(warehouse_router)
+app.include_router(customer_router)
+app.include_router(supplier_router)
