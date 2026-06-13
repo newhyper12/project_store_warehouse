@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --page-light: radial-gradient(1200px 600px at 80% -10%, rgba(99,102,241,0.14), transparent 60%),
+                  radial-gradient(900px 500px at -10% 30%, rgba(6,182,212,0.10), transparent 60%),
+                  radial-gradient(700px 400px at 50% 110%, rgba(16,185,129,0.08), transparent 60%),
+                  #f5f7fb;
+    --page-dark:  radial-gradient(1200px 600px at 80% -10%, rgba(99,102,241,0.22), transparent 60%),
+                  radial-gradient(900px 500px at -10% 30%, rgba(6,182,212,0.14), transparent 60%),
+                  radial-gradient(700px 400px at 50% 110%, rgba(16,185,129,0.10), transparent 60%),
+                  #0a1024;
+  }
+  html { font-family: ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif; }
+  body { @apply antialiased text-slate-900 dark:text-slate-100; background: var(--page-light); min-height: 100vh; }
+  html.dark body { background: var(--page-dark); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+}
+
+@layer components {
+  .page-shell { @apply min-h-screen w-full; }
+  .container-app { @apply mx-auto w-full max-w-6xl px-4 sm:px-6; }
+
+  /* card */
+  .card {
+    @apply rounded-3xl bg-white/95 dark:bg-slate-900/70 backdrop-blur
+           border border-slate-200/80 dark:border-slate-800/80 shadow-soft;
+  }
+  .card-hover { @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lift; }
+
+  /* buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold
+           transition-all duration-150 active:scale-[.97]
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100
+           min-h-[40px];
+  }
+  .btn-primary { @apply btn text-white shadow-sm bg-gradient-to-br from-brand-500 to-brand-700 hover:from-brand-600 hover:shadow-lift; }
+  .btn-secondary { @apply btn bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white; }
+  .btn-outline { @apply btn border border-slate-300 dark:border-slate-700 bg-white/80 dark:bg-slate-900/40 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800; }
+  .btn-ghost { @apply btn bg-transparent text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800; }
+  .btn-danger { @apply btn text-white bg-gradient-to-br from-rose-500 to-rose-700 hover:shadow-lift; }
+  .btn-success { @apply btn text-white bg-gradient-to-br from-emerald-500 to-emerald-700 hover:shadow-lift; }
+  .btn-sm { @apply px-3 py-1.5 text-xs min-h-[32px] rounded-xl; }
+
+  /* form controls */
+  .input, .select, .textarea {
+    @apply w-full rounded-2xl border border-slate-300 dark:border-slate-700
+           bg-white/95 dark:bg-slate-900/60 px-3.5 py-2.5 text-sm
+           focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500
+           placeholder:text-slate-400 min-h-[40px];
+  }
+  .textarea { @apply min-h-[88px]; }
+  .label { @apply block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5; }
+
+  /* badges */
+  .badge { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ring-black/5 dark:ring-white/10; }
+  .badge-dot::before {
+    content: ""; width: 6px; height: 6px; border-radius: 9999px;
+    background: currentColor; opacity:.85; display:inline-block;
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  /* typography */
+  .h1 { @apply text-3xl sm:text-4xl font-black tracking-tight; }
+  .h2 { @apply text-xl sm:text-2xl font-black tracking-tight; }
+  .h3 { @apply text-lg font-bold tracking-tight; }
+  .muted { @apply text-slate-500 dark:text-slate-400; }
+
+  /* header */
+  .glass-header {
+    @apply border-b border-slate-200/70 dark:border-slate-800/70
+           bg-white/80 dark:bg-slate-900/70 backdrop-blur-md sticky top-0 z-30;
+  }
+
+  /* tabs */
+  .tab { @apply px-3.5 py-2 rounded-2xl text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap; }
+  .tab-active { @apply bg-brand-600 text-white shadow-soft; }
+  .tab-inactive { @apply text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800; }
+
+  /* table */
+  .table-base { @apply w-full text-sm; }
+  .table-base th { @apply text-left font-semibold text-slate-500 dark:text-slate-400 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800; }
+  .table-base td { @apply px-3 py-2.5 border-b border-slate-100 dark:border-slate-800; }
+  .table-base tbody tr { transition: background-color .15s; }
+  .table-base tbody tr:hover { @apply bg-slate-50 dark:bg-slate-800/40; }
+
+  /* role-card */
+  .role-card { @apply card p-6 card-hover relative overflow-hidden cursor-pointer text-left; }
+  .role-card::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events:none;
+    background: linear-gradient(135deg, rgba(59,130,246,0), rgba(59,130,246,.15));
+    opacity: 0; transition: opacity .25s;
+  }
+  .role-card:hover::after { opacity: 1; }
+
+  /* skeleton */
+  .skeleton {
+    @apply rounded-xl bg-slate-200/70 dark:bg-slate-800/70;
+    background-image: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+
+  /* icon container */
+  .icon-tile {
+    @apply inline-flex items-center justify-center rounded-2xl shadow-soft;
+  }
+}
+
+.animate-fade-up { animation: fade-up .35s ease both; }
+.animate-scale-in { animation: scale-in .2s ease both; }
