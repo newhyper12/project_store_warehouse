@@ -1,24 +1,24 @@
-# Python
+node_modules/
+dist/
+.env
+.venv/
 venv/
 __pycache__/
 *.pyc
-*.pyo
-.env
+.DS_Store
+__MACOSX/
+.idea/
+.vscode/
+*.log
 
-# Node.js
 node_modules/
 dist/
 build/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# OS
+.env
+backend/.env
+.venv/
+venv/
+__pycache__/
+*.pyc
 .DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
+__MACOSX/
