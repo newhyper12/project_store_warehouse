@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Plus, Tag, Package, Pencil, Save, X, Link as LinkIcon, Sparkles, Calendar } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
+import { Plus, Tag, Package, Pencil, Save, X, Link as LinkIcon, Sparkles, Calendar, Search } from "lucide-react";
 import { apiProducts } from "../api/client";
 import { ErrorBanner, SuccessBanner, EmptyState, LoadingSkeleton } from "../ui/Feedback";
 import { Modal } from "../ui/Modal";
 import { IconBadge, IconTile } from "../ui/IconTile";
 import { RadioCardGroup } from "../ui/RadioCard";
+import { Pagination, type PageMeta } from "../ui/Pagination";
 
 interface Category { id: number; name: string }
 interface SupplierProduct {
@@ -19,30 +20,46 @@ interface GlobalProduct {
   category_id?: number | null; category_name?: string | null;
   already_supplied: boolean;
 }
+interface PageResp<T> { items: T[]; page: number; page_size: number; total: number; total_pages: number; has_next: boolean; has_prev: boolean }
 
 const fmt = (n: number | string) => Number(n).toLocaleString("ru-RU") + " ₽";
 const dateFmt = (s?: string | null) => (s ? new Date(s).toLocaleDateString("ru-RU") : "—");
+const PAGE_SIZE = 15;
 
 type AddMode = "connect" | "create";
 
 export function SupplierProductsTab() {
-  const [list, setList] = useState<SupplierProduct[] | null>(null);
+  const [resp, setResp] = useState<PageResp<SupplierProduct> | null>(null);
   const [cats, setCats] = useState<Category[]>([]);
   const [q, setQ] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
+  const [page, setPage] = useState(1);
   const [err, setErr] = useState<{ message: string } | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [editFor, setEditFor] = useState<SupplierProduct | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
-  const reload = async () => {
-    try {
-      const [a, b] = await Promise.all([apiProducts.supplierProductsManaged(), apiProducts.supplierCategories()]);
-      setList(a); setCats(b);
-    } catch (e) { setErr(e as { message: string }); }
-  };
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { const t = setTimeout(() => setQDebounced(q.trim()), 300); return () => clearTimeout(t); }, [q]);
+  useEffect(() => { setPage(1); }, [qDebounced]);
 
-  const filtered = (list || []).filter((p) => !q || p.product_name.toLowerCase().includes(q.toLowerCase()));
+  const reload = useCallback(async () => {
+    try {
+      const data: PageResp<SupplierProduct> = await apiProducts.supplierProductsManaged({
+        page, page_size: PAGE_SIZE, search: qDebounced || undefined,
+      });
+      setResp(data);
+    } catch (e) { setErr(e as { message: string }); }
+  }, [page, qDebounced]);
+
+  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { apiProducts.supplierCategories().then(setCats).catch((e) => setErr(e)); }, []);
+
+  const list = resp?.items ?? [];
+  const meta: PageMeta | null = resp ? {
+    page: resp.page, page_size: resp.page_size, total: resp.total,
+    total_pages: resp.total_pages, has_next: resp.has_next, has_prev: resp.has_prev,
+    items_shown: list.length,
+  } : null;
 
   return (
     <div className="space-y-4">
@@ -57,36 +74,39 @@ export function SupplierProductsTab() {
         </button>
       </div>
 
-      {!list ? <LoadingSkeleton /> : filtered.length === 0 ? (
+      {!resp ? <LoadingSkeleton /> : list.length === 0 ? (
         <EmptyState icon={Package} title="В вашем каталоге пока нет товаров"
                     hint="Подключите существующий товар или создайте новый." />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((p) => (
-            <div key={p.id} className="card p-4 flex flex-col gap-2 animate-fade-up">
-              <div className="flex items-start gap-3">
-                <IconTile icon={Package} tone={p.is_active ? "emerald" : "slate"} />
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold truncate">{p.product_name}</div>
-                  {p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {list.map((p) => (
+              <div key={p.id} className="card p-4 flex flex-col gap-2 animate-fade-up">
+                <div className="flex items-start gap-3">
+                  <IconTile icon={Package} tone={p.is_active ? "emerald" : "slate"} />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold truncate">{p.product_name}</div>
+                    {p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}
+                  </div>
+                  <button className="btn-ghost btn-sm" onClick={() => setEditFor(p)}><Pencil className="h-4 w-4" /></button>
                 </div>
-                <button className="btn-ghost btn-sm" onClick={() => setEditFor(p)}><Pencil className="h-4 w-4" /></button>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="badge bg-slate-100 dark:bg-slate-800">Цена: <b className="ml-1">{fmt(p.unit_price)}</b></span>
+                  <span className="badge bg-slate-100 dark:bg-slate-800">Срок: <b className="ml-1">{p.lead_time_days} дн.</b></span>
+                  {p.quantity_available != null && (
+                    <span className="badge bg-slate-100 dark:bg-slate-800">Остаток: <b className="ml-1">{p.quantity_available}</b></span>
+                  )}
+                  {!p.is_active && <span className="badge bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">Неактивен</span>}
+                </div>
+                <div className="text-sm inline-flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5 text-slate-400" /> Доставка ≈ {dateFmt(p.estimated_delivery_date)}
+                </div>
+                {p.notes && <div className="muted text-sm line-clamp-2">{p.notes}</div>}
               </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="badge bg-slate-100 dark:bg-slate-800">Цена: <b className="ml-1">{fmt(p.unit_price)}</b></span>
-                <span className="badge bg-slate-100 dark:bg-slate-800">Срок: <b className="ml-1">{p.lead_time_days} дн.</b></span>
-                {p.quantity_available != null && (
-                  <span className="badge bg-slate-100 dark:bg-slate-800">Остаток: <b className="ml-1">{p.quantity_available}</b></span>
-                )}
-                {!p.is_active && <span className="badge bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">Неактивен</span>}
-              </div>
-              <div className="text-sm inline-flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5 text-slate-400" /> Доставка ≈ {dateFmt(p.estimated_delivery_date)}
-              </div>
-              {p.notes && <div className="muted text-sm line-clamp-2">{p.notes}</div>}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          <Pagination meta={meta} onChange={setPage} />
+        </>
       )}
 
       <EditModal item={editFor} onClose={() => setEditFor(null)}
@@ -130,7 +150,17 @@ function EditModal({ item, onClose, onSaved, onError }: {
     finally { setBusy(false); }
   };
   return (
-    <Modal open={!!item} onClose={onClose} title={`Редактировать: ${item?.product_name ?? ""}`}>
+    <Modal
+      open={!!item}
+      onClose={onClose}
+      title={`Редактировать: ${item?.product_name ?? ""}`}
+      footer={
+        <>
+          <button className="btn-outline" onClick={onClose}><X className="h-4 w-4" />Отмена</button>
+          <button className="btn-primary" disabled={busy} onClick={save}><Save className="h-4 w-4" />Сохранить</button>
+        </>
+      }
+    >
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div><label className="label">Цена поставщика</label>
@@ -146,10 +176,6 @@ function EditModal({ item, onClose, onSaved, onError }: {
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
           <span>Активен</span>
         </label>
-        <div className="flex gap-2 pt-2 justify-end">
-          <button className="btn-outline" onClick={onClose}><X className="h-4 w-4" />Отмена</button>
-          <button className="btn-primary" disabled={busy} onClick={save}><Save className="h-4 w-4" />Сохранить</button>
-        </div>
       </div>
     </Modal>
   );
@@ -161,8 +187,12 @@ function AddModal({ open, onClose, cats, onSaved, onError }: {
   onError: (e: { message: string }) => void;
 }) {
   const [mode, setMode] = useState<AddMode>("connect");
-  const [global, setGlobal] = useState<GlobalProduct[] | null>(null);
+  // connect: paginated global catalog with search
+  const [gResp, setGResp] = useState<PageResp<GlobalProduct> | null>(null);
+  const [gQ, setGQ] = useState(""); const [gQD, setGQD] = useState(""); const [gPage, setGPage] = useState(1);
   const [pickedId, setPickedId] = useState<number | null>(null);
+  const [pickedName, setPickedName] = useState<string>("");
+
   const [price, setPrice] = useState("0");
   const [lead, setLead] = useState("7");
   const [qty, setQty] = useState("");
@@ -178,11 +208,21 @@ function AddModal({ open, onClose, cats, onSaved, onError }: {
 
   useEffect(() => {
     if (!open) return;
-    setMode("connect"); setPickedId(null);
+    setMode("connect"); setPickedId(null); setPickedName("");
     setPrice("0"); setLead("7"); setQty(""); setNotes("");
     setName(""); setDesc(""); setRetail("0"); setCatId("");
-    apiProducts.supplierGlobalCatalog().then(setGlobal).catch((e) => onError(e));
-  }, [open, onError]);
+    setGQ(""); setGQD(""); setGPage(1);
+  }, [open]);
+
+  useEffect(() => { const t = setTimeout(() => setGQD(gQ.trim()), 300); return () => clearTimeout(t); }, [gQ]);
+  useEffect(() => { setGPage(1); }, [gQD]);
+
+  useEffect(() => {
+    if (!open || mode !== "connect") return;
+    apiProducts.supplierGlobalCatalog({
+      page: gPage, page_size: PAGE_SIZE, search: gQD || undefined, only_not_supplied: true,
+    }).then(setGResp).catch((e) => onError(e));
+  }, [open, mode, gPage, gQD, onError]);
 
   const save = async () => {
     setBusy(true);
@@ -205,13 +245,32 @@ function AddModal({ open, onClose, cats, onSaved, onError }: {
           notes: notes || null,
         });
       }
-      await onSaved("Товар добавлен в каталог");
+      await onSaved(mode === "connect" ? "Товар подключён" : "Товар создан");
     } catch (e) { onError(e as { message: string }); }
     finally { setBusy(false); }
   };
 
+  const gItems = gResp?.items ?? [];
+  const gMeta: PageMeta | null = gResp ? {
+    page: gResp.page, page_size: gResp.page_size, total: gResp.total,
+    total_pages: gResp.total_pages, has_next: gResp.has_next, has_prev: gResp.has_prev,
+    items_shown: gItems.length,
+  } : null;
+
   return (
-    <Modal open={open} onClose={onClose} title="Добавить товар в каталог">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Добавить товар"
+      footer={
+        <>
+          <button className="btn-outline" onClick={onClose}><X className="h-4 w-4" />Отмена</button>
+          <button className="btn-primary" disabled={busy} onClick={save}>
+            <Save className="h-4 w-4" /> Добавить
+          </button>
+        </>
+      }
+    >
       <div className="space-y-4">
         <RadioCardGroup<AddMode>
           name="add-mode"
@@ -229,16 +288,41 @@ function AddModal({ open, onClose, cats, onSaved, onError }: {
         />
 
         {mode === "connect" && (
-          <div>
-            <label className="label">Товар</label>
-            <select className="select" value={pickedId ?? ""} onChange={(e) => setPickedId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— выберите —</option>
-              {(global || []).filter((g) => !g.already_supplied).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}{g.category_name ? ` · ${g.category_name}` : ""}
-                </option>
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input className="input pl-9" placeholder="Поиск по каталогу…"
+                     value={gQ} onChange={(e) => setGQ(e.target.value)} />
+            </div>
+            <div className="max-h-64 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl divide-y divide-slate-200 dark:divide-slate-700">
+              {gItems.length === 0 && (
+                <div className="p-4 text-sm muted text-center">
+                  {gResp ? "Ничего не найдено" : "Загрузка…"}
+                </div>
+              )}
+              {gItems.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => { setPickedId(g.id); setPickedName(g.name); }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                    pickedId === g.id ? "bg-brand-50 dark:bg-brand-900/30" : ""
+                  }`}
+                >
+                  <Package className="h-4 w-4 text-slate-400" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold truncate">{g.name}</div>
+                    <div className="text-xs muted truncate">
+                      {g.category_name || "—"} · {fmt(g.price)}
+                    </div>
+                  </div>
+                </button>
               ))}
-            </select>
+            </div>
+            <Pagination meta={gMeta} onChange={setGPage} />
+            {pickedName && (
+              <div className="text-xs muted">Выбрано: <b>{pickedName}</b></div>
+            )}
           </div>
         )}
 
@@ -271,13 +355,6 @@ function AddModal({ open, onClose, cats, onSaved, onError }: {
             <input className="input" type="number" min="0" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
           <div><label className="label">Заметки</label>
             <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
-        </div>
-
-        <div className="flex gap-2 pt-2 justify-end">
-          <button className="btn-outline" onClick={onClose}><X className="h-4 w-4" />Отмена</button>
-          <button className="btn-primary" disabled={busy} onClick={save}>
-            <Save className="h-4 w-4" /> Добавить
-          </button>
         </div>
       </div>
     </Modal>

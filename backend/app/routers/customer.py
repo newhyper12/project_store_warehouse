@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db import db
 from ..orders import load_application, log_status
+from ..pagination import build_page, page_params
 from ..schemas import (
     Category,
     OrderApplicationCreate,
     OrderApplicationOut,
-    ProductCatalogEntry,
     ProposalDecisionPayload,
 )
 from ..security import require_role
@@ -28,42 +28,83 @@ async def categories():
     return [dict(r) for r in rows]
 
 
-@router.get("/products", response_model=List[ProductCatalogEntry])
-async def products():
+@router.get("/products")
+async def products(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    only_available: bool = Query(False),
+    sort: str = Query("name"),
+):
+    """Paginated catalog. Search/filter/sort happen in SQL."""
+    page, page_size = pp
+
+    where = ["COALESCE(p.is_active, TRUE) = TRUE"]
+    args: dict = {}
+    if search and search.strip():
+        where.append("(p.name ILIKE :q OR COALESCE(p.description,'') ILIKE :q)")
+        args["q"] = f"%{search.strip()}%"
+    if category_id is not None:
+        where.append("p.category_id = :cid")
+        args["cid"] = category_id
+    if only_available:
+        where.append("p.stock_quantity > 0")
+    where_sql = " AND ".join(where)
+
+    order_sql = {
+        "name":       "p.name ASC",
+        "price_asc":  "p.price ASC, p.name ASC",
+        "price_desc": "p.price DESC, p.name ASC",
+        "category":   "c.name NULLS LAST, p.name ASC",
+        "stock":      "p.stock_quantity DESC, p.name ASC",
+    }.get(sort, "p.name ASC")
+
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", args
+    ))["c"] or 0)
+
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
-                  p.category_id, c.name AS category_name
-             FROM products p
-        LEFT JOIN categories c ON c.id = p.category_id
-            ORDER BY c.name NULLS LAST, p.name"""
+        f"""SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
+                   p.category_id, c.name AS category_name
+              FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY {order_sql}
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
-    sup_rows = await db.fetch_all(
-        """SELECT sp.product_id, sp.supplier_id, s.name AS supplier_name,
-                  sp.unit_price, sp.lead_time_days
-             FROM supplier_products sp
-             JOIN suppliers s ON s.id = sp.supplier_id
-            WHERE sp.is_active = TRUE
-            ORDER BY sp.lead_time_days"""
-    )
-    today = date.today()
+
+    ids = [r["id"] for r in rows]
     sup_by_product: dict[int, list] = {}
-    for r in sup_rows:
-        sup_by_product.setdefault(r["product_id"], []).append({
-            "supplier_id": r["supplier_id"],
-            "supplier_name": r["supplier_name"],
-            "unit_price": r["unit_price"],
-            "lead_time_days": r["lead_time_days"],
-            "estimated_delivery_date": today + timedelta(days=int(r["lead_time_days"])),
-        })
-    out = []
+    if ids:
+        sup_rows = await db.fetch_all(
+            """SELECT sp.product_id, sp.supplier_id, s.name AS supplier_name,
+                      sp.unit_price, sp.lead_time_days
+                 FROM supplier_products sp
+                 JOIN suppliers s ON s.id = sp.supplier_id
+                WHERE sp.is_active = TRUE
+                  AND sp.product_id = ANY(:ids)
+                ORDER BY sp.lead_time_days""",
+            {"ids": ids},
+        )
+        today = date.today()
+        for r in sup_rows:
+            sup_by_product.setdefault(r["product_id"], []).append({
+                "supplier_id": r["supplier_id"],
+                "supplier_name": r["supplier_name"],
+                "unit_price": r["unit_price"],
+                "lead_time_days": r["lead_time_days"],
+                "estimated_delivery_date": today + timedelta(days=int(r["lead_time_days"])),
+            })
+
+    items = []
     for r in rows:
         d = dict(r)
-        stock = d.pop("stock_quantity")
-        d["stock_quantity"] = stock
-        d["in_stock"] = stock > 0
+        d["in_stock"] = (d.get("stock_quantity") or 0) > 0
         d["suppliers"] = sup_by_product.get(d["id"], [])
-        out.append(d)
-    return out
+        items.append(d)
+    return build_page(items, total, page, page_size)
 
 
 @router.post("/order-applications", response_model=OrderApplicationOut, status_code=201)

@@ -10,10 +10,11 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..db import db
+from ..pagination import build_page, page_params
 from ..security import require_role
 
 # ---------------- schemas ----------------
@@ -111,18 +112,44 @@ async def store_categories(_: dict = StoreUser):
     return [dict(r) for r in rows]
 
 
-@store_router.get("/products-managed", response_model=List[StoreProductOut])
-async def store_products_managed(_: dict = StoreUser):
+@store_router.get("/products-managed")
+async def store_products_managed(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    _: dict = StoreUser,
+):
+    page, page_size = pp
+    where = ["TRUE"]
+    args: dict = {}
+    if search and search.strip():
+        where.append("(p.name ILIKE :q OR COALESCE(p.sku,'') ILIKE :q)")
+        args["q"] = f"%{search.strip()}%"
+    if category_id is not None:
+        where.append("p.category_id = :cid")
+        args["cid"] = category_id
+    if is_active is not None:
+        where.append("COALESCE(p.is_active, TRUE) = :ia")
+        args["ia"] = is_active
+    where_sql = " AND ".join(where)
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", args
+    ))["c"] or 0)
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT p.id, p.name, p.description, p.price, p.stock_quantity, p.sku,
-                  COALESCE(p.is_active, TRUE) AS is_active,
-                  p.category_id, c.name AS category_name,
-                  COALESCE((SELECT COUNT(*) FROM supplier_products sp
-                              WHERE sp.product_id = p.id AND sp.is_active = TRUE), 0) AS suppliers_count
-             FROM products p LEFT JOIN categories c ON c.id = p.category_id
-            ORDER BY p.name"""
+        f"""SELECT p.id, p.name, p.description, p.price, p.stock_quantity, p.sku,
+                   COALESCE(p.is_active, TRUE) AS is_active,
+                   p.category_id, c.name AS category_name,
+                   COALESCE((SELECT COUNT(*) FROM supplier_products sp
+                               WHERE sp.product_id = p.id AND sp.is_active = TRUE), 0) AS suppliers_count
+              FROM products p LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY p.name
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
-    return [dict(r) for r in rows]
+    return build_page([dict(r) for r in rows], total, page, page_size)
 
 
 @store_router.post("/products", response_model=StoreProductOut, status_code=201)
@@ -190,44 +217,88 @@ async def supplier_categories(_: dict = SupUser):
     return [dict(r) for r in rows]
 
 
-@sup_router.get("/products-managed", response_model=List[SupplierProductOut])
-async def supplier_products_managed(user: dict = SupUser):
+@sup_router.get("/products-managed")
+async def supplier_products_managed(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    user: dict = SupUser,
+):
+    page, page_size = pp
+    where = ["sp.supplier_id = :s"]
+    args: dict = {"s": user["entity_id"]}
+    if search and search.strip():
+        where.append("p.name ILIKE :q")
+        args["q"] = f"%{search.strip()}%"
+    if is_active is not None:
+        where.append("sp.is_active = :ia")
+        args["ia"] = is_active
+    where_sql = " AND ".join(where)
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM supplier_products sp JOIN products p ON p.id=sp.product_id WHERE {where_sql}",
+        args,
+    ))["c"] or 0)
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT sp.id, sp.product_id, p.name AS product_name,
-                  p.category_id, c.name AS category_name,
-                  sp.unit_price, sp.lead_time_days, sp.quantity_available, sp.notes,
-                  sp.estimated_delivery_date, sp.is_active
-             FROM supplier_products sp
-             JOIN products p   ON p.id = sp.product_id
-        LEFT JOIN categories c ON c.id = p.category_id
-            WHERE sp.supplier_id = :s
-            ORDER BY p.name""",
-        {"s": user["entity_id"]},
+        f"""SELECT sp.id, sp.product_id, p.name AS product_name,
+                   p.category_id, c.name AS category_name,
+                   sp.unit_price, sp.lead_time_days, sp.quantity_available, sp.notes,
+                   sp.estimated_delivery_date, sp.is_active
+              FROM supplier_products sp
+              JOIN products p   ON p.id = sp.product_id
+         LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY p.name
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
     today = date.today()
-    out = []
+    items = []
     for r in rows:
         d = dict(r)
         if d.get("estimated_delivery_date") is None:
             d["estimated_delivery_date"] = today + timedelta(days=int(d["lead_time_days"]))
-        out.append(d)
-    return out
+        items.append(d)
+    return build_page(items, total, page, page_size)
 
 
 @sup_router.get("/products-catalog")
-async def supplier_products_catalog(user: dict = SupUser):
+async def supplier_products_catalog(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    only_not_supplied: bool = Query(False),
+    user: dict = SupUser,
+):
     """Global product catalog with a flag telling whether this supplier already supplies it."""
+    page, page_size = pp
+    where = ["COALESCE(p.is_active, TRUE) = TRUE"]
+    args: dict = {"s": user["entity_id"]}
+    if search and search.strip():
+        where.append("(p.name ILIKE :q OR COALESCE(p.sku,'') ILIKE :q)")
+        args["q"] = f"%{search.strip()}%"
+    if category_id is not None:
+        where.append("p.category_id = :cid")
+        args["cid"] = category_id
+    if only_not_supplied:
+        where.append("NOT EXISTS (SELECT 1 FROM supplier_products sp WHERE sp.product_id=p.id AND sp.supplier_id=:s)")
+    where_sql = " AND ".join(where)
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", args
+    ))["c"] or 0)
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT p.id, p.name, p.description, p.price,
-                  p.category_id, c.name AS category_name,
-                  EXISTS(SELECT 1 FROM supplier_products sp
-                          WHERE sp.product_id = p.id AND sp.supplier_id = :s) AS already_supplied
-             FROM products p LEFT JOIN categories c ON c.id = p.category_id
-            WHERE COALESCE(p.is_active, TRUE) = TRUE
-            ORDER BY p.name""",
-        {"s": user["entity_id"]},
+        f"""SELECT p.id, p.name, p.description, p.price,
+                   p.category_id, c.name AS category_name,
+                   EXISTS(SELECT 1 FROM supplier_products sp
+                           WHERE sp.product_id = p.id AND sp.supplier_id = :s) AS already_supplied
+              FROM products p LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY p.name
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
-    return [dict(r) for r in rows]
+    return build_page([dict(r) for r in rows], total, page, page_size)
 
 
 @sup_router.post("/products", response_model=SupplierProductOut, status_code=201)

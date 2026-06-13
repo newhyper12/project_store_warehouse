@@ -1,12 +1,13 @@
 """Warehouse endpoints. warehouse_id from JWT."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db import db
 from ..orders import log_status
+from ..pagination import build_page, page_params
 from ..schemas import ProductWithStock, RejectPayload, RequestItemOut, WarehouseRequestOut
 from ..security import require_role
 
@@ -62,15 +63,37 @@ async def _maybe_complete_application(app_id: int, user_id: int) -> None:
         await log_status(app_id, "completed", "Заказ выполнен", user_id)
 
 
-@router.get("/products", response_model=List[ProductWithStock])
-async def products(_: dict = WHUser):
+@router.get("/products")
+async def products(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    _: dict = WHUser,
+):
+    page, page_size = pp
+    where = ["TRUE"]
+    args: dict = {}
+    if search and search.strip():
+        where.append("(p.name ILIKE :q OR COALESCE(p.sku,'') ILIKE :q)")
+        args["q"] = f"%{search.strip()}%"
+    if category_id is not None:
+        where.append("p.category_id = :cid")
+        args["cid"] = category_id
+    where_sql = " AND ".join(where)
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", args
+    ))["c"] or 0)
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
-                  p.category_id, c.name AS category_name
-             FROM products p LEFT JOIN categories c ON c.id = p.category_id
-            ORDER BY p.name"""
+        f"""SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
+                   p.category_id, c.name AS category_name
+              FROM products p LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY p.name
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
-    return [dict(r) for r in rows]
+    return build_page([dict(r) for r in rows], total, page, page_size)
 
 
 @router.get("/requests", response_model=List[WarehouseRequestOut])

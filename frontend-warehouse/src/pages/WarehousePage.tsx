@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Boxes, Package, AlertTriangle, CheckCircle2, XCircle, Truck, Search, Filter, Tag,
+  Boxes, Package, AlertTriangle, CheckCircle2, XCircle, Truck, Search, Tag,
 } from "lucide-react";
 import { api } from "../api/client";
 import type { Product, WarehouseRequest } from "../types";
@@ -8,6 +8,10 @@ import { ErrorBanner, SuccessBanner, EmptyState, LoadingSkeleton } from "../ui/F
 import { StatusBadge } from "../ui/Status";
 import { IconBadge, IconTile } from "../ui/IconTile";
 import { Modal } from "../ui/Modal";
+import { Pagination, type PageMeta } from "../ui/Pagination";
+
+interface StockPage { items: Product[]; page: number; page_size: number; total: number; total_pages: number; has_next: boolean; has_prev: boolean }
+const PAGE_SIZE = 15;
 
 const STATUSES = ["pending", "processing", "approved", "rejected", "shipped"] as const;
 type Status = typeof STATUSES[number];
@@ -17,22 +21,40 @@ export function WarehousePage() {
   const [tab, setTab] = useState<Tab>("requests");
   const [status, setStatus] = useState<Status>("pending");
   const [rows, setRows] = useState<WarehouseRequest[] | null>(null);
-  const [stock, setStock] = useState<Product[] | null>(null);
+  const [stock, setStock] = useState<StockPage | null>(null);
   const [err, setErr] = useState<{ message: string } | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [rejectFor, setRejectFor] = useState<number | null>(null);
   const [reason, setReason] = useState("");
   const [search, setSearch] = useState("");
-  const [catFilter, setCatFilter] = useState<string | null>(null);
+  const [searchDeb, setSearchDeb] = useState("");
+  const [stockPage, setStockPage] = useState(1);
 
-  const reload = async () => {
+  useEffect(() => { const t = setTimeout(() => setSearchDeb(search.trim()), 300); return () => clearTimeout(t); }, [search]);
+  useEffect(() => { setStockPage(1); }, [searchDeb]);
+
+  const loadRequests = useCallback(async () => {
+    setErr(null);
+    try { setRows(await api.warehouseRequests(status)); }
+    catch (e) { setErr(e as { message: string }); }
+  }, [status]);
+
+  const loadStock = useCallback(async () => {
     setErr(null);
     try {
-      if (tab === "requests") setRows(await api.warehouseRequests(status));
-      else setStock(await api.warehouseProducts());
+      setStock(await api.warehouseProducts({
+        page: stockPage, page_size: PAGE_SIZE, search: searchDeb || undefined,
+      }));
     } catch (e) { setErr(e as { message: string }); }
+  }, [stockPage, searchDeb]);
+
+  const reload = async () => {
+    if (tab === "requests") await loadRequests();
+    else await loadStock();
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [tab, status]);
+
+  useEffect(() => { if (tab === "requests") void loadRequests(); }, [tab, loadRequests]);
+  useEffect(() => { if (tab === "stock") void loadStock(); }, [tab, loadStock]);
 
   const run = async (fn: () => Promise<unknown>, msg: string) => {
     setErr(null);
@@ -46,23 +68,12 @@ export function WarehousePage() {
     setRejectFor(null); setReason("");
   };
 
-  const cats = useMemo(() => {
-    if (!stock) return [];
-    const set = new Set<string>();
-    stock.forEach((p) => p.category_name && set.add(p.category_name));
-    return Array.from(set).sort();
-  }, [stock]);
-
-  const filteredStock = useMemo(() => {
-    if (!stock) return null;
-    let list = stock.slice();
-    if (catFilter) list = list.filter((p) => p.category_name === catFilter);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter((p) => p.name.toLowerCase().includes(q));
-    }
-    return list.sort((a, b) => (a.stock_quantity ?? 0) - (b.stock_quantity ?? 0));
-  }, [stock, search, catFilter]);
+  const stockItems = stock?.items ?? null;
+  const stockMeta: PageMeta | null = stock ? {
+    page: stock.page, page_size: stock.page_size, total: stock.total,
+    total_pages: stock.total_pages, has_next: stock.has_next, has_prev: stock.has_prev,
+    items_shown: stock.items.length,
+  } : null;
 
   return (
     <div className="space-y-6">
@@ -175,40 +186,36 @@ export function WarehousePage() {
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Filter className="h-4 w-4 text-slate-400" />
-              <button onClick={() => setCatFilter(null)} className={`tab ${!catFilter ? "tab-active" : "tab-inactive"}`}>Все</button>
-              {cats.map((c) => (
-                <button key={c} onClick={() => setCatFilter(c)} className={`tab ${catFilter === c ? "tab-active" : "tab-inactive"}`}>{c}</button>
-              ))}
-            </div>
           </section>
-          {!filteredStock ? <LoadingSkeleton /> : filteredStock.length === 0 ? (
+          {!stockItems ? <LoadingSkeleton /> : stockItems.length === 0 ? (
             <EmptyState icon={Boxes} title="Нет товаров" />
           ) : (
-            <div className="card overflow-x-auto p-0">
-              <table className="table-base">
-                <thead><tr><th>Товар</th><th>Категория</th><th>Остаток</th><th>Статус</th></tr></thead>
-                <tbody>
-                  {filteredStock.map((p) => {
-                    const q = p.stock_quantity ?? 0;
-                    const status = q === 0 ? "out" : q < 5 ? "low" : "ok";
-                    return (
-                      <tr key={p.id}>
-                        <td className="font-medium">{p.name}</td>
-                        <td>{p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}</td>
-                        <td className="tabular-nums font-semibold">{q}</td>
-                        <td>
-                          {status === "out" && <IconBadge icon={XCircle} tone="rose">Нет</IconBadge>}
-                          {status === "low" && <IconBadge icon={AlertTriangle} tone="amber">Мало</IconBadge>}
-                          {status === "ok" && <IconBadge icon={CheckCircle2} tone="emerald">В наличии</IconBadge>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="card overflow-x-auto p-0">
+                <table className="table-base">
+                  <thead><tr><th>Товар</th><th>Категория</th><th>Остаток</th><th>Статус</th></tr></thead>
+                  <tbody>
+                    {stockItems.map((p) => {
+                      const q = p.stock_quantity ?? 0;
+                      const status = q === 0 ? "out" : q < 5 ? "low" : "ok";
+                      return (
+                        <tr key={p.id}>
+                          <td className="font-medium">{p.name}</td>
+                          <td>{p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}</td>
+                          <td className="tabular-nums font-semibold">{q}</td>
+                          <td>
+                            {status === "out" && <IconBadge icon={XCircle} tone="rose">Нет</IconBadge>}
+                            {status === "low" && <IconBadge icon={AlertTriangle} tone="amber">Мало</IconBadge>}
+                            {status === "ok" && <IconBadge icon={CheckCircle2} tone="emerald">В наличии</IconBadge>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination meta={stockMeta} onChange={setStockPage} />
+            </>
           )}
         </>
       )}

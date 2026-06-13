@@ -46,7 +46,8 @@ export const api = {
 
   // customer
   customerCategories: async () => (await http.get("/customer/categories")).data,
-  customerProducts: async () => (await http.get("/customer/products")).data,
+  customerProducts: async (params: { page?: number; page_size?: number; search?: string; category_id?: number | null; only_available?: boolean; sort?: string } = {}) =>
+    (await http.get("/customer/products", { params: { page_size: 15, ...params } })).data,
   customerCreateApplication: async (items: { product_id: number; quantity: number }[]) =>
     (await http.post("/customer/order-applications", { items })).data,
   customerMyApplications: async () => (await http.get("/customer/order-applications/me")).data,
@@ -58,7 +59,8 @@ export const api = {
   ) => (await http.post(`/customer/order-applications/${id}/proposal/respond`, { decision })).data,
 
   // store
-  storeProducts: async () => (await http.get("/store/products")).data,
+  storeProducts: async (params: { page?: number; page_size?: number; search?: string; category_id?: number | null } = {}) =>
+    (await http.get("/store/products", { params: { page_size: 15, ...params } })).data,
   storeApplications: async () => (await http.get("/store/customer-applications")).data,
   storeGetApplication: async (id: number) =>
     (await http.get(`/store/customer-applications/${id}`)).data,
@@ -97,7 +99,8 @@ export const api = {
 export const apiProducts = {
   // store
   storeCategories: async () => (await http.get("/store/categories")).data,
-  storeProductsManaged: async () => (await http.get("/store/products-managed")).data,
+  storeProductsManaged: async (params: { page?: number; page_size?: number; search?: string; category_id?: number | null; is_active?: boolean | null } = {}) =>
+    (await http.get("/store/products-managed", { params: { page_size: 15, ...params } })).data,
   storeCreateProduct: async (payload: {
     name: string; description?: string; price: number;
     stock_quantity?: number; category_id?: number | null;
@@ -108,8 +111,10 @@ export const apiProducts = {
 
   // supplier
   supplierCategories: async () => (await http.get("/supplier/categories")).data,
-  supplierProductsManaged: async () => (await http.get("/supplier/products-managed")).data,
-  supplierGlobalCatalog: async () => (await http.get("/supplier/products-catalog")).data,
+  supplierProductsManaged: async (params: { page?: number; page_size?: number; search?: string; is_active?: boolean | null } = {}) =>
+    (await http.get("/supplier/products-managed", { params: { page_size: 15, ...params } })).data,
+  supplierGlobalCatalog: async (params: { page?: number; page_size?: number; search?: string; category_id?: number | null; only_not_supplied?: boolean } = {}) =>
+    (await http.get("/supplier/products-catalog", { params: { page_size: 15, ...params } })).data,
   supplierConnectProduct: async (payload: {
     product_id: number; unit_price: number; lead_time_days?: number;
     quantity_available?: number | null; notes?: string | null; is_active?: boolean;

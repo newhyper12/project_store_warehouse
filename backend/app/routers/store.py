@@ -1,13 +1,13 @@
 """Store endpoints. store_id ALWAYS taken from JWT."""
 from __future__ import annotations
-
 from datetime import date, timedelta
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db import db
 from ..orders import load_application, log_status
+from ..pagination import build_page, page_params
 from ..schemas import (
     OrderApplicationOut,
     ProductCatalogEntry,
@@ -25,15 +25,38 @@ StoreUser = Depends(require_role("store"))
 
 
 # ---------- catalog ----------
-@router.get("/products", response_model=List[ProductCatalogEntry])
-async def products(_: dict = StoreUser):
+@router.get("/products")
+async def products(
+    pp: tuple[int, int] = Depends(page_params),
+    search: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
+    _: dict = StoreUser,
+):
+    page, page_size = pp
+    where = ["TRUE"]
+    args: dict = {}
+    if search and search.strip():
+        where.append("(p.name ILIKE :q OR COALESCE(p.sku,'') ILIKE :q)")
+        args["q"] = f"%{search.strip()}%"
+    if category_id is not None:
+        where.append("p.category_id = :cid")
+        args["cid"] = category_id
+    where_sql = " AND ".join(where)
+    total = int((await db.fetch_one(
+        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", args
+    ))["c"] or 0)
+    args_page = {**args, "lim": page_size, "off": (page - 1) * page_size}
     rows = await db.fetch_all(
-        """SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
-                  p.category_id, c.name AS category_name
-             FROM products p LEFT JOIN categories c ON c.id = p.category_id
-            ORDER BY p.name"""
+        f"""SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
+                   p.category_id, c.name AS category_name
+              FROM products p LEFT JOIN categories c ON c.id = p.category_id
+             WHERE {where_sql}
+          ORDER BY p.name
+             LIMIT :lim OFFSET :off""",
+        args_page,
     )
-    return [{**dict(r), "in_stock": r["stock_quantity"] > 0, "suppliers": []} for r in rows]
+    items = [{**dict(r), "in_stock": (r["stock_quantity"] or 0) > 0, "suppliers": []} for r in rows]
+    return build_page(items, total, page, page_size)
 
 
 # ---------- list / get applications ----------

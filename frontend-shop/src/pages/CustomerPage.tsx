@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Search, Filter, ShoppingCart, Plus, Minus, Package, Tag, Truck, Calendar,
   MessageSquare, ArrowRight, XCircle, Inbox, ChevronDown, ChevronUp,
@@ -9,45 +9,80 @@ import { ErrorBanner, SuccessBanner, EmptyState, LoadingSkeleton } from "../ui/F
 import { IconTile, IconBadge } from "../ui/IconTile";
 import { StatusBadge } from "../ui/Status";
 import { RadioCardGroup } from "../ui/RadioCard";
+import { Pagination, type PageMeta } from "../ui/Pagination";
 
 type Decision = "accept_partial_warehouse_only" | "accept_split_warehouse_and_supplier" | "cancel_application";
+type Sort = "name" | "price_asc" | "price_desc" | "category" | "stock";
 
-type Sort = "name" | "price_asc" | "price_desc" | "category" | "stock" | "delivery";
+interface ProductsPage {
+  items: Product[]; page: number; page_size: number;
+  total: number; total_pages: number; has_next: boolean; has_prev: boolean;
+}
 
+const PAGE_SIZE = 15;
 const fmt = (n: number) => Number(n).toLocaleString("ru-RU") + " ₽";
 const dateFmt = (s?: string | null) => (s ? new Date(s).toLocaleDateString("ru-RU") : "—");
 
 export function CustomerPage() {
-  const [products, setProducts] = useState<Product[] | null>(null);
+  const [resp, setResp] = useState<ProductsPage | null>(null);
   const [cats, setCats] = useState<Category[] | null>(null);
   const [apps, setApps] = useState<OrderApplication[] | null>(null);
-  const [cart, setCart] = useState<Record<number, number>>({});
+  // Cart stores both quantity and a snapshot of name+price from the time the
+  // user added the item, so that the cart UI keeps working when the user
+  // navigates to other pages of the paginated catalog.
+  const [cart, setCart] = useState<Record<number, { qty: number; name: string; price: number }>>({});
   const [err, setErr] = useState<{ message: string } | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
+  const [searchDeb, setSearchDeb] = useState("");
   const [catFilter, setCatFilter] = useState<number | null>(null);
   const [sort, setSort] = useState<Sort>("name");
   const [onlyAvail, setOnlyAvail] = useState(false);
+  const [page, setPage] = useState(1);
 
-  const reload = async () => {
+  // debounce search
+  useEffect(() => { const t = setTimeout(() => setSearchDeb(search.trim()), 300); return () => clearTimeout(t); }, [search]);
+  // reset page when filters/search change
+  useEffect(() => { setPage(1); }, [searchDeb, catFilter, sort, onlyAvail]);
+
+  const loadProducts = useCallback(async () => {
     try {
-      const [p, c, a] = await Promise.all([
-        api.customerProducts(), api.customerCategories(), api.customerMyApplications(),
-      ]);
-      setProducts(p); setCats(c); setApps(a);
+      const data: ProductsPage = await api.customerProducts({
+        page, page_size: PAGE_SIZE,
+        search: searchDeb || undefined,
+        category_id: catFilter ?? undefined,
+        only_available: onlyAvail || undefined,
+        sort,
+      });
+      setResp(data);
     } catch (e) { setErr(e as { message: string }); }
-  };
-  useEffect(() => { reload(); }, []);
+  }, [page, searchDeb, catFilter, sort, onlyAvail]);
 
-  const add = (id: number, delta: number) =>
+  const loadMeta = useCallback(async () => {
+    try {
+      const [c, a] = await Promise.all([api.customerCategories(), api.customerMyApplications()]);
+      setCats(c); setApps(a);
+    } catch (e) { setErr(e as { message: string }); }
+  }, []);
+
+  useEffect(() => { void loadProducts(); }, [loadProducts]);
+  useEffect(() => { void loadMeta(); }, [loadMeta]);
+
+  const reload = async () => { await Promise.all([loadProducts(), loadMeta()]); };
+
+  const add = (p: Product, delta: number) =>
     setCart((c) => {
-      const n = Math.max(0, (c[id] || 0) + delta);
-      const out = { ...c }; if (n === 0) delete out[id]; else out[id] = n; return out;
+      const cur = c[p.id]?.qty || 0;
+      const n = Math.max(0, cur + delta);
+      const out = { ...c };
+      if (n === 0) delete out[p.id];
+      else out[p.id] = { qty: n, name: p.name, price: Number(p.price) };
+      return out;
     });
 
   const submit = async () => {
-    const items = Object.entries(cart).map(([pid, q]) => ({ product_id: Number(pid), quantity: q }));
+    const items = Object.entries(cart).map(([pid, v]) => ({ product_id: Number(pid), quantity: v.qty }));
     if (!items.length) { setErr({ message: "Корзина пуста" }); return; }
     setBusy(true);
     try {
@@ -58,39 +93,18 @@ export function CustomerPage() {
     finally { setBusy(false); }
   };
 
-  const filtered = useMemo(() => {
-    if (!products) return null;
-    let list = products.slice();
-    if (catFilter !== null) list = list.filter((p) => p.category_id === catFilter);
-    if (onlyAvail) list = list.filter((p) => (p.stock_quantity ?? 0) > 0);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.description || "").toLowerCase().includes(q));
-    }
-    list.sort((a, b) => {
-      switch (sort) {
-        case "price_asc":  return Number(a.price) - Number(b.price);
-        case "price_desc": return Number(b.price) - Number(a.price);
-        case "category":   return (a.category_name || "").localeCompare(b.category_name || "");
-        case "stock":      return (b.stock_quantity ?? 0) - (a.stock_quantity ?? 0);
-        case "delivery": {
-          const ad = a.suppliers?.[0]?.lead_time_days ?? 999;
-          const bd = b.suppliers?.[0]?.lead_time_days ?? 999;
-          return ad - bd;
-        }
-        default: return a.name.localeCompare(b.name);
-      }
-    });
-    return list;
-  }, [products, catFilter, onlyAvail, search, sort]);
+  const filtered = resp?.items ?? null;
+  const meta: PageMeta | null = resp ? {
+    page: resp.page, page_size: resp.page_size, total: resp.total,
+    total_pages: resp.total_pages, has_next: resp.has_next, has_prev: resp.has_prev,
+    items_shown: resp.items.length,
+  } : null;
 
-  const cartTotal = useMemo(() => {
-    if (!products) return 0;
-    return Object.entries(cart).reduce((acc, [pid, q]) => {
-      const p = products.find((x) => x.id === Number(pid));
-      return acc + (p ? Number(p.price) * q : 0);
-    }, 0);
-  }, [cart, products]);
+  const cartTotal = useMemo(
+    () => Object.values(cart).reduce((acc, v) => acc + v.price * v.qty, 0),
+    [cart],
+  );
+  const cartQty = (id: number) => cart[id]?.qty || 0;
 
   return (
     <div className="space-y-6">
@@ -117,7 +131,6 @@ export function CustomerPage() {
                 <option value="price_desc">Цена ↓</option>
                 <option value="category">По категории</option>
                 <option value="stock">По остатку</option>
-                <option value="delivery">По сроку поставки</option>
               </select>
             </div>
           </div>
@@ -142,54 +155,57 @@ export function CustomerPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="h2">Каталог</h2>
-          {filtered && <span className="muted text-sm">{filtered.length} товаров</span>}
+          {meta && <span className="muted text-sm">Найдено товаров: {meta.total.toLocaleString("ru-RU")}</span>}
         </div>
         {!filtered ? <LoadingSkeleton rows={3} /> : filtered.length === 0 ? (
           <EmptyState icon={Package} title="Ничего не найдено" hint="Сбросьте фильтры или измените запрос" />
         ) : (
-          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((p) => {
-              const inStock = (p.stock_quantity ?? 0) > 0;
-              const supplier = p.suppliers?.[0];
-              return (
-                <div key={p.id} className="card card-hover p-4 flex flex-col gap-3">
-                  <div className="flex items-start gap-3">
-                    <IconTile icon={Package} tone={inStock ? "blue" : "slate"} size="md" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold leading-tight truncate">{p.name}</div>
-                      {p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}
+          <>
+            <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((p) => {
+                const inStock = (p.stock_quantity ?? 0) > 0;
+                const supplier = p.suppliers?.[0];
+                return (
+                  <div key={p.id} className="card card-hover p-4 flex flex-col gap-3">
+                    <div className="flex items-start gap-3">
+                      <IconTile icon={Package} tone={inStock ? "blue" : "slate"} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold leading-tight truncate">{p.name}</div>
+                        {p.category_name && <IconBadge icon={Tag} tone="indigo">{p.category_name}</IconBadge>}
+                      </div>
+                    </div>
+                    <p className="muted text-sm line-clamp-2 min-h-[2.5rem]">{p.description}</p>
+                    <div className="flex items-center gap-2 text-xs">
+                      {inStock ? (
+                        <span className="badge bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
+                          Доступно: {p.stock_quantity}
+                        </span>
+                      ) : supplier ? (
+                        <span className="badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                          <Truck className="h-3.5 w-3.5" /> Под заказ ~{supplier.lead_time_days} дн.
+                        </span>
+                      ) : (
+                        <span className="badge bg-slate-200 text-slate-700">Нет в наличии</span>
+                      )}
+                    </div>
+                    <div className="mt-auto flex items-center justify-between gap-2">
+                      <div className="text-lg font-black">{fmt(Number(p.price))}</div>
+                      <div className="flex items-center gap-1.5">
+                        <button className="btn-outline btn-sm h-9 w-9 p-0" onClick={() => add(p, -1)} aria-label="−">
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <span className="w-7 text-center font-bold tabular-nums">{cartQty(p.id)}</span>
+                        <button className="btn-primary btn-sm h-9 w-9 p-0" onClick={() => add(p, +1)} aria-label="+">
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <p className="muted text-sm line-clamp-2 min-h-[2.5rem]">{p.description}</p>
-                  <div className="flex items-center gap-2 text-xs">
-                    {inStock ? (
-                      <span className="badge bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                        Доступно: {p.stock_quantity}
-                      </span>
-                    ) : supplier ? (
-                      <span className="badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-                        <Truck className="h-3.5 w-3.5" /> Под заказ ~{supplier.lead_time_days} дн.
-                      </span>
-                    ) : (
-                      <span className="badge bg-slate-200 text-slate-700">Нет в наличии</span>
-                    )}
-                  </div>
-                  <div className="mt-auto flex items-center justify-between gap-2">
-                    <div className="text-lg font-black">{fmt(Number(p.price))}</div>
-                    <div className="flex items-center gap-1.5">
-                      <button className="btn-outline btn-sm h-9 w-9 p-0" onClick={() => add(p.id, -1)} aria-label="−">
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span className="w-7 text-center font-bold tabular-nums">{cart[p.id] || 0}</span>
-                      <button className="btn-primary btn-sm h-9 w-9 p-0" onClick={() => add(p.id, +1)} aria-label="+">
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+            <Pagination meta={meta} onChange={setPage} />
+          </>
         )}
       </section>
 
